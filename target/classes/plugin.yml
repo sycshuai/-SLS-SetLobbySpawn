@@ -1,0 +1,14 @@
+name: SetLobbySpawn
+version: '1.0'
+main: com.setlobbyspawn.SetLobbySpawn
+api-version: '1.21'
+author: SetLobbySpawn
+description: 简单的全服出生点与入服欢迎插件
+commands:
+  sls:
+    description: SetLobbySpawn 主指令
+    usage: /sls <help|spawn|saywelcome|welcometitle|reload>
+permissions:
+  setlobbyspawn.admin:
+    description: 允许使用 /sls 的全部设置指令
+    default: op
