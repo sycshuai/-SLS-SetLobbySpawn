@@ -1,9 +1,10 @@
 name: SetLobbySpawn
 version: '1.0'
 main: com.setlobbyspawn.SetLobbySpawn
-api-version: '1.21'
+# 最低 api-version：1.13+ 服务器均接受；1.8-1.12 服务端会自动忽略此字段
+api-version: '1.13'
 author: SetLobbySpawn
-description: 简单的全服出生点与入服欢迎插件
+description: 简单的全服出生点与入服欢迎插件（兼容 Paper/Spigot 1.8+）
 commands:
   sls:
     description: SetLobbySpawn 主指令

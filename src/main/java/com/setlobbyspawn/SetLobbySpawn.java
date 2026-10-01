@@ -15,14 +15,32 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * 全服出生点 + 入服欢迎插件。
+ *
+ * 兼容 Paper/Spigot 1.8 ~ 最新版：
+ *  - 编译为 Java 8 字节码，所有 JVM 均可加载；
+ *  - 只直接调用 1.8 就存在的 API；
+ *  - 版本较新的 API（标题 1.11+、死亡重生点 1.12+）用反射调用，
+ *    老版本找不到方法时自动降级，不会报错。
+ */
 public final class SetLobbySpawn extends JavaPlugin implements Listener {
 
     private static final int MAX_LINES = 5;
+
+    // ---- 反射缓存：新版本才有 API，老版本为 null，自动降级 ----
+    private static Method SEND_TITLE_TIMED;   // Player#sendTitle(String,String,int,int,int)  1.12+
+    private static Method SEND_TITLE_DOUBLE;  // Player#sendTitle(String,String)             1.11+
+    private static Method SEND_TITLE_SINGLE;  // Player#sendTitle(String)                     1.11+
+    private static Method SET_RESPAWN;        // PlayerRespawnEvent#setRespawnLocation(Location) 1.12+
+    private static boolean methodsScanned = false;
+    private static boolean respawnFallbackLogged = false;
 
     private boolean spawnEnabled = true;
     private String spawnWorld = "world";
@@ -38,13 +56,40 @@ public final class SetLobbySpawn extends JavaPlugin implements Listener {
     public void onEnable() {
         saveDefaultConfig();
         loadConfigValues();
+        scanMethods();
         Bukkit.getPluginManager().registerEvents(this, this);
-        getLogger().info("SetLobbySpawn 已启用，版本 " + getDescription().getVersion());
+        getLogger().info("SetLobbySpawn 已启用，版本 " + getDescription().getVersion()
+                + "，兼容 Paper/Spigot 1.8+");
     }
 
     @Override
     public void onDisable() {
         getLogger().info("SetLobbySpawn 已停用");
+    }
+
+    /** 扫描当前服务器可用的新版本 API（找不到则置 null，走降级逻辑） */
+    private static synchronized void scanMethods() {
+        if (methodsScanned) {
+            return;
+        }
+        methodsScanned = true;
+        try {
+            SEND_TITLE_TIMED = Player.class.getMethod(
+                    "sendTitle", String.class, String.class, int.class, int.class, int.class);
+        } catch (NoSuchMethodException ignored) {
+        }
+        try {
+            SEND_TITLE_DOUBLE = Player.class.getMethod("sendTitle", String.class, String.class);
+        } catch (NoSuchMethodException ignored) {
+        }
+        try {
+            SEND_TITLE_SINGLE = Player.class.getMethod("sendTitle", String.class);
+        } catch (NoSuchMethodException ignored) {
+        }
+        try {
+            SET_RESPAWN = PlayerRespawnEvent.class.getMethod("setRespawnLocation", Location.class);
+        } catch (NoSuchMethodException ignored) {
+        }
     }
 
     /** 从配置文件读取全部设置 */
@@ -96,6 +141,33 @@ public final class SetLobbySpawn extends JavaPlugin implements Listener {
     /** 转换 & 颜色符（支持 &0-9 &a-f &k-o &r 及 &x 十六进制颜色） */
     private String color(String text) {
         return ChatColor.translateAlternateColorCodes('&', text);
+    }
+
+    /** 发送入服欢迎标题：1.11+ 用原生标题；1.8-1.10 无标题 API，降级为聊天消息 */
+    private void sendWelcomeTitle(Player player, String title, String subtitle) {
+        scanMethods();
+        try {
+            if (SEND_TITLE_TIMED != null) {
+                SEND_TITLE_TIMED.invoke(player, title, subtitle, 10, 70, 20);
+                return;
+            }
+            if (SEND_TITLE_DOUBLE != null) {
+                SEND_TITLE_DOUBLE.invoke(player, title, subtitle);
+                return;
+            }
+            if (SEND_TITLE_SINGLE != null) {
+                SEND_TITLE_SINGLE.invoke(player, title);
+                return;
+            }
+        } catch (ReflectiveOperationException ignored) {
+            // 反射失败不影响，继续走降级
+        }
+        if (title != null && !title.isEmpty()) {
+            player.sendMessage(color("&6[欢迎标题] " + title));
+        }
+        if (subtitle != null && !subtitle.isEmpty()) {
+            player.sendMessage(color("&7" + subtitle.replace('\n', ' ')));
+        }
     }
 
     @Override
@@ -303,7 +375,7 @@ public final class SetLobbySpawn extends JavaPlugin implements Listener {
                     }
                     subtitle.append(color(titles.get(i)));
                 }
-                player.sendTitle(mainTitle, subtitle.toString(), 10, 70, 20);
+                sendWelcomeTitle(player, mainTitle, subtitle.toString());
             }, 30L);
         }
     }
@@ -315,8 +387,19 @@ public final class SetLobbySpawn extends JavaPlugin implements Listener {
             return;
         }
         Location target = getSpawnLocation();
-        if (target != null) {
-            event.setRespawnLocation(target);
+        if (target == null) {
+            return;
+        }
+        scanMethods();
+        if (SET_RESPAWN != null) {
+            try {
+                SET_RESPAWN.invoke(event, target);
+            } catch (ReflectiveOperationException ignored) {
+            }
+        } else if (!respawnFallbackLogged) {
+            respawnFallbackLogged = true;
+            getLogger().warning("当前服务器版本过旧(需 1.12+)，无法设置死亡重生点，"
+                    + "'死亡回出生点'功能不可用");
         }
     }
 }
